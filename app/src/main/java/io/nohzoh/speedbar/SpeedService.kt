@@ -38,6 +38,24 @@ class SpeedService : Service(), LocationListener {
         /** État lu par l'écran principal. */
         @Volatile var running = false
         @Volatile var lastError: String? = null
+
+        /** Dernière vitesse connue, partagée avec l'écran principal. */
+        @Volatile private var lastSpeedKmh: Float? = null
+        @Volatile private var lastFixAt = 0L
+
+        /** Appelé (thread principal) à chaque nouvelle mesure. */
+        var onUpdate: (() -> Unit)? = null
+
+        /** Vitesse actuelle en km/h, ou null si pas de fix GPS récent. */
+        fun currentSpeed(): Float? {
+            val fresh = SystemClock.elapsedRealtime() - lastFixAt < STALE_MS
+            return if (running && fresh) lastSpeedKmh else null
+        }
+
+        fun marks(ctx: Context): List<Float> {
+            val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_MARKS, "") ?: ""
+            return raw.split(";").mapNotNull { it.replace(',', '.').toFloatOrNull() }
+        }
         private const val NOTIF_ID = 1
         /** Au-delà de ce délai sans fix GPS, on affiche "--". */
         private const val STALE_MS = 5_000L
@@ -47,8 +65,6 @@ class SpeedService : Service(), LocationListener {
 
     private lateinit var lm: LocationManager
     private lateinit var nm: NotificationManager
-    private var lastSpeedKmh: Float? = null
-    private var lastFixAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -99,6 +115,8 @@ class SpeedService : Service(), LocationListener {
 
     override fun onDestroy() {
         running = false
+        lastSpeedKmh = null
+        onUpdate?.invoke()
         lm.removeUpdates(this)
         super.onDestroy()
     }
@@ -107,6 +125,7 @@ class SpeedService : Service(), LocationListener {
         lastFixAt = SystemClock.elapsedRealtime()
         lastSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else null
         nm.notify(NOTIF_ID, buildNotification())
+        onUpdate?.invoke()
     }
 
     @Deprecated("Requis sur les anciennes API")
@@ -117,11 +136,6 @@ class SpeedService : Service(), LocationListener {
         nm.notify(NOTIF_ID, buildNotification())
     }
 
-    private fun currentSpeed(): Float? {
-        val fresh = SystemClock.elapsedRealtime() - lastFixAt < STALE_MS
-        return if (fresh) lastSpeedKmh else null
-    }
-
     private fun markSpeed() {
         val speed = currentSpeed() ?: return
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -129,13 +143,10 @@ class SpeedService : Service(), LocationListener {
         val updated = if (existing.isEmpty()) "%.1f".format(speed) else "$existing;${"%.1f".format(speed)}"
         prefs.edit().putString(KEY_MARKS, updated).apply()
         nm.notify(NOTIF_ID, buildNotification())
+        onUpdate?.invoke()
     }
 
-    private fun lowestMark(): Float? {
-        val raw = getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_MARKS, "") ?: ""
-        val values = raw.split(";").mapNotNull { it.replace(',', '.').toFloatOrNull() }
-        return values.minOrNull()
-    }
+    private fun lowestMark(): Float? = marks(this).minOrNull()
 
     private fun buildNotification(): Notification {
         val speed = currentSpeed()
