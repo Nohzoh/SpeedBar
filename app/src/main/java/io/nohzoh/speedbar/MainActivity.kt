@@ -2,27 +2,34 @@ package io.nohzoh.speedbar
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Écran minimal : permissions, démarrer/arrêter, voir et effacer les vitesses notées. */
+/** Écran minimal : permissions, démarrer/arrêter, état, vitesses notées. */
 class MainActivity : Activity() {
 
+    private lateinit var statusView: TextView
     private lateinit var marksView: TextView
+    private lateinit var settingsButton: Button
+    private lateinit var root: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val pad = (24 * resources.displayMetrics.density).toInt()
-        val layout = LinearLayout(this).apply {
+        root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             // Android 15 impose l'edge-to-edge : on décale le contenu sous les barres système.
@@ -38,8 +45,6 @@ class MainActivity : Activity() {
             textSize = 24f
             setPadding(0, 0, 0, pad)
         }
-        layout.addView(title)
-
         val start = Button(this).apply {
             text = "Démarrer"
             setOnClickListener { startWithPermissions() }
@@ -49,6 +54,18 @@ class MainActivity : Activity() {
             setOnClickListener {
                 startService(Intent(this@MainActivity, SpeedService::class.java)
                     .setAction(SpeedService.ACTION_STOP))
+                refreshSoon()
+            }
+        }
+        statusView = TextView(this).apply {
+            textSize = 16f
+            setPadding(0, pad, 0, pad / 2)
+        }
+        settingsButton = Button(this).apply {
+            text = "Ouvrir les réglages de l'app"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null)))
             }
         }
         marksView = TextView(this).apply { setPadding(0, pad, 0, pad) }
@@ -61,16 +78,59 @@ class MainActivity : Activity() {
             }
         }
 
-        layout.addView(start)
-        layout.addView(stop)
-        layout.addView(marksView)
-        layout.addView(clear)
-        setContentView(layout)
+        root.addView(title)
+        root.addView(start)
+        root.addView(stop)
+        root.addView(statusView)
+        root.addView(settingsButton)
+        root.addView(marksView)
+        root.addView(clear)
+        setContentView(root)
     }
 
     override fun onResume() {
         super.onResume()
+        refreshStatus()
         refreshMarks()
+    }
+
+    private fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+
+    /** Liste ce qui empêche l'affichage, ou confirme que tout va bien. */
+    private fun refreshStatus() {
+        val problems = mutableListOf<String>()
+
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            problems += if (granted(Manifest.permission.ACCESS_COARSE_LOCATION))
+                "• Localisation « approximative » seulement : la vitesse GPS nécessite « précise »."
+            else
+                "• Localisation non autorisée."
+        }
+        val nm = getSystemService(NotificationManager::class.java)
+        if (!nm.areNotificationsEnabled()) {
+            problems += "• Notifications désactivées : la vitesse ne peut pas s'afficher dans la barre d'état."
+        }
+        val lm = getSystemService(LocationManager::class.java)
+        if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            problems += "• GPS désactivé sur le téléphone."
+        }
+        SpeedService.lastError?.let { problems += "• $it" }
+
+        val state = if (SpeedService.running)
+            "✅ En cours : la vitesse s'affiche dans la barre d'état (« -- » en attendant le GPS)."
+        else
+            "⏹ Arrêté."
+
+        statusView.text = if (problems.isEmpty()) state
+                          else state + "\n\n" + problems.joinToString("\n")
+        // Le bouton réglages n'apparaît que si une permission manque.
+        settingsButton.visibility = if (problems.isEmpty()) android.view.View.GONE
+                                    else android.view.View.VISIBLE
+    }
+
+    /** Laisse le temps au service de démarrer avant de rafraîchir l'état. */
+    private fun refreshSoon() {
+        root.postDelayed({ refreshStatus() }, 800)
     }
 
     private fun refreshMarks() {
@@ -86,11 +146,13 @@ class MainActivity : Activity() {
     private fun startWithPermissions() {
         val needed = buildList {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        }.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        }.filter { !granted(it) }
 
         if (needed.isEmpty()) {
             startForegroundService(Intent(this, SpeedService::class.java))
+            refreshSoon()
         } else {
             requestPermissions(needed.toTypedArray(), 1)
         }
@@ -98,8 +160,12 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, perms, results)
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
             startForegroundService(Intent(this, SpeedService::class.java))
+            refreshSoon()
+        } else {
+            // Refus (ou refus définitif : Android ne redemande plus) → l'état l'explique.
+            refreshStatus()
         }
     }
 }

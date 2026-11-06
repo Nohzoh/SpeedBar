@@ -30,7 +30,14 @@ class SpeedService : Service(), LocationListener {
     companion object {
         const val ACTION_STOP = "io.nohzoh.speedbar.STOP"
         const val ACTION_MARK = "io.nohzoh.speedbar.MARK"
-        private const val CHANNEL_ID = "speed"
+        // Canal en importance DEFAULT (mais muet) : certains téléphones masquent
+        // l'icône des notifications « silencieuses » (LOW) dans la barre d'état.
+        private const val CHANNEL_ID = "speed_v2"
+        private const val OLD_CHANNEL_ID = "speed"
+
+        /** État lu par l'écran principal. */
+        @Volatile var running = false
+        @Volatile var lastError: String? = null
         private const val NOTIF_ID = 1
         /** Au-delà de ce délai sans fix GPS, on affiche "--". */
         private const val STALE_MS = 5_000L
@@ -49,9 +56,12 @@ class SpeedService : Service(), LocationListener {
         super.onCreate()
         lm = getSystemService(LOCATION_SERVICE) as LocationManager
         nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        nm.deleteNotificationChannel(OLD_CHANNEL_ID)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Vitesse", NotificationManager.IMPORTANCE_LOW).apply {
+            NotificationChannel(CHANNEL_ID, "Vitesse", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
             }
         )
     }
@@ -68,21 +78,27 @@ class SpeedService : Service(), LocationListener {
             }
         }
 
-        startForeground(
-            NOTIF_ID,
-            buildNotification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        )
+        lastError = null
         try {
+            startForeground(
+                NOTIF_ID,
+                buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
             // Fix toutes les secondes, sans filtre de distance.
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this)
-        } catch (e: SecurityException) {
+            running = true
+        } catch (e: Exception) {
+            lastError = "Démarrage impossible : ${e.javaClass.simpleName} ${e.message ?: ""}".trim()
+            running = false
             stopSelf()
+            return START_NOT_STICKY
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        running = false
         lm.removeUpdates(this)
         super.onDestroy()
     }
