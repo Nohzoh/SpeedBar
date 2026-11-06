@@ -14,3 +14,7 @@ Utile par exemple pour les jeux géolocalisés qui bloquent les interactions au-
 - **GitHub Actions** : chaque push compile l'APK release signé, disponible dans l'onglet Actions (artefact `speedbar-release`).
 
 minSdk 26 (Android 8), targetSdk 35.
+
+## Signature
+Le build release est signé avec une clé fournie via les secrets GitHub Actions :
+`SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_PASSWORD`, `SIGNING_KEY_ALIAS`.

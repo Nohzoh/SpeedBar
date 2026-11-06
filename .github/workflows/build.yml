@@ -17,8 +17,6 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      # Si les secrets de signature existent, on les utilise.
-      # Sinon, build.gradle.kts retombe sur la clé temporaire de signing/.
       - name: Préparer la clé de signature
         env:
           KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
@@ -28,7 +26,8 @@ jobs:
             echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "Clé : secrets GitHub"
           else
-            echo "::warning::Clé TEMPORAIRE utilisée (signing/speedbar-temp.jks)"
+            echo "::error::Secrets de signature absents (SIGNING_KEYSTORE_BASE64, SIGNING_STORE_PASSWORD, SIGNING_KEY_PASSWORD, SIGNING_KEY_ALIAS)"
+            exit 1
           fi
 
       - name: Build release

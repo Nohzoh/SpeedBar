@@ -15,23 +15,24 @@ android {
         versionName = "0.2.0"
     }
 
-    // Signature : variables d'env (secrets GitHub) si définies,
-    // sinon clé TEMPORAIRE du dossier signing/ (voir signing/README.md).
+    // Signature release : uniquement via variables d'env (secrets GitHub).
+    // Sans elles, l'APK release n'est pas signé (le workflow échoue avec un message clair).
+    val keystorePath = System.getenv("SIGNING_KEYSTORE_PATH")?.takeIf { it.isNotEmpty() }
     signingConfigs {
-        create("release") {
-            val envStore = System.getenv("SIGNING_KEYSTORE_PATH")
-            storeFile = if (!envStore.isNullOrEmpty()) file(envStore)
-                        else rootProject.file("signing/speedbar-temp.jks")
-            storePassword = System.getenv("SIGNING_STORE_PASSWORD")?.takeIf { it.isNotEmpty() } ?: "dwWELF4VSEQB3tH51B7z7rnK"
-            keyAlias = System.getenv("SIGNING_KEY_ALIAS")?.takeIf { it.isNotEmpty() } ?: "speedbar"
-            keyPassword = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotEmpty() } ?: "dwWELF4VSEQB3tH51B7z7rnK"
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
