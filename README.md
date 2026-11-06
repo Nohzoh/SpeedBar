@@ -11,6 +11,6 @@ Utile par exemple pour les jeux géolocalisés qui bloquent les interactions au-
 
 ## Compiler
 - **Android Studio** : ouvrir le dossier, Run.
-- **GitHub Actions** : chaque push compile l'APK debug, disponible dans l'onglet Actions (artefact `speedbar-debug`).
+- **GitHub Actions** : chaque push compile l'APK release signé, disponible dans l'onglet Actions (artefact `speedbar-release`).
 
 minSdk 26 (Android 8), targetSdk 35.

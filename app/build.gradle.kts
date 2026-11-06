@@ -11,13 +11,27 @@ android {
         applicationId = "io.nohzoh.speedbar"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+    }
+
+    // Signature : variables d'env (secrets GitHub) si définies,
+    // sinon clé TEMPORAIRE du dossier signing/ (voir signing/README.md).
+    signingConfigs {
+        create("release") {
+            val envStore = System.getenv("SIGNING_KEYSTORE_PATH")
+            storeFile = if (!envStore.isNullOrEmpty()) file(envStore)
+                        else rootProject.file("signing/speedbar-temp.jks")
+            storePassword = System.getenv("SIGNING_STORE_PASSWORD")?.takeIf { it.isNotEmpty() } ?: "dwWELF4VSEQB3tH51B7z7rnK"
+            keyAlias = System.getenv("SIGNING_KEY_ALIAS")?.takeIf { it.isNotEmpty() } ?: "speedbar"
+            keyPassword = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotEmpty() } ?: "dwWELF4VSEQB3tH51B7z7rnK"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

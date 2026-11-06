@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -24,8 +25,20 @@ class MainActivity : Activity() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(pad, pad * 2, pad, pad)
+            // Android 15 impose l'edge-to-edge : on décale le contenu sous les barres système.
+            setOnApplyWindowInsetsListener { v, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                v.setPadding(pad, bars.top + pad, pad, bars.bottom + pad)
+                insets
+            }
         }
+
+        val title = TextView(this).apply {
+            text = getString(R.string.app_name)
+            textSize = 24f
+            setPadding(0, 0, 0, pad)
+        }
+        layout.addView(title)
 
         val start = Button(this).apply {
             text = "Démarrer"
