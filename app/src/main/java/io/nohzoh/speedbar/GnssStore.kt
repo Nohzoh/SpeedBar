@@ -26,6 +26,7 @@ data class Sample(
     val satsUsed: Int,
     val satsTracked: Int,
     val avgCn0Used: Float?,
+    val hdop: Float?,
 )
 
 /** Données GNSS partagées entre le service (écriture) et les écrans (lecture). Thread principal. */
@@ -42,6 +43,12 @@ object GnssStore {
     private var location: Location? = null
     private var locationAt = 0L
     var ttffMs: Int? = null
+
+    /** Dilution de précision lue dans les trames NMEA (null si la puce ne la fournit pas). */
+    var pdop: Float? = null; private set
+    var hdop: Float? = null; private set
+    var vdop: Float? = null; private set
+    private var dopAt = 0L
     val history = ArrayDeque<Sample>()
     private var lastSampleAt = 0L
 
@@ -49,6 +56,7 @@ object GnssStore {
         sats = emptyList(); statusAt = 0L
         location = null; locationAt = 0L
         ttffMs = null; history.clear(); lastSampleAt = 0L
+        pdop = null; hdop = null; vdop = null; dopAt = 0L
     }
 
     fun onStatus(s: GnssStatus) {
@@ -72,6 +80,38 @@ object GnssStore {
         locationAt = SystemClock.elapsedRealtime()
         sample()
     }
+
+    /**
+     * Trames NMEA : GSA donne PDOP/HDOP/VDOP, GGA donne HDOP seul (secours).
+     * $GNGSA,A,3,sv1,…,sv12,PDOP,HDOP,VDOP[,systemId]*CS
+     */
+    fun onNmea(line: String) {
+        val body = line.trim().substringBefore('*')
+        val f = body.split(',')
+        if (f.isEmpty() || f[0].length < 6) return
+        fun num(i: Int) = f.getOrNull(i)?.toFloatOrNull()?.takeIf { it > 0f && it < 99f }
+        when (f[0].substring(3)) {
+            "GSA" -> {
+                val p = num(15); val h = num(16); val v = num(17)
+                if (h != null) {
+                    pdop = p; hdop = h; vdop = v
+                    dopAt = SystemClock.elapsedRealtime()
+                }
+            }
+            "GGA" -> {
+                val h = num(8)
+                // GGA seulement si aucune GSA récente.
+                if (h != null && SystemClock.elapsedRealtime() - dopAt > 3_000L) {
+                    hdop = h; pdop = null; vdop = null
+                    dopAt = SystemClock.elapsedRealtime() - 2_000L
+                }
+            }
+        }
+    }
+
+    fun freshHdop(): Float? = hdop?.takeIf { SystemClock.elapsedRealtime() - dopAt < STALE_MS }
+    fun freshPdop(): Float? = pdop?.takeIf { SystemClock.elapsedRealtime() - dopAt < STALE_MS }
+    fun freshVdop(): Float? = vdop?.takeIf { SystemClock.elapsedRealtime() - dopAt < STALE_MS }
 
     fun currentSats(): List<Sat> =
         if (SystemClock.elapsedRealtime() - statusAt < STALE_MS) sats else emptyList()
@@ -99,6 +139,7 @@ object GnssStore {
                 satsUsed = usedCount(list),
                 satsTracked = trackedCount(list),
                 avgCn0Used = avgCn0Used(list),
+                hdop = freshHdop(),
             )
         )
         while (history.isNotEmpty() && now - history.first().t > WINDOW_MS) history.removeFirst()

@@ -69,6 +69,10 @@ class SpeedService : Service(), LocationListener {
     private lateinit var lm: LocationManager
     private lateinit var nm: NotificationManager
 
+    private val nmeaListener = android.location.OnNmeaMessageListener { message, _ ->
+        GnssStore.onNmea(message)
+    }
+
     private val gnssCallback = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
             GnssStore.onStatus(status)
@@ -119,6 +123,7 @@ class SpeedService : Service(), LocationListener {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this)
             @Suppress("DEPRECATION")
             lm.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
+            lm.addNmeaListener(nmeaListener, Handler(Looper.getMainLooper()))
             running = true
         } catch (e: Exception) {
             lastError = "Démarrage impossible : ${e.javaClass.simpleName} ${e.message ?: ""}".trim()
@@ -135,6 +140,7 @@ class SpeedService : Service(), LocationListener {
         onUpdate?.invoke()
         lm.removeUpdates(this)
         lm.unregisterGnssStatusCallback(gnssCallback)
+        lm.removeNmeaListener(nmeaListener)
         super.onDestroy()
     }
 

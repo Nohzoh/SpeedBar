@@ -85,6 +85,7 @@ class GnssActivity : Activity() {
             "spdacc" to "Précision vitesse",
             "bearing" to "Cap",
             "ttff" to "Premier fix",
+            "dop" to "Géométrie des satellites (HDOP)",
         )
         tileDefs.chunked(2).forEach { row ->
             val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -106,6 +107,7 @@ class GnssActivity : Activity() {
         content.addView(section("5 dernières minutes"))
         addSpark(content, "Vitesse (km/h)", C.GREEN, { "%.0f".format(it) }) { it.speedKmh }
         addSpark(content, "Précision horizontale (m)", C.AMBER, { "%.0f".format(it) }) { it.accuracyM }
+        addSpark(content, "HDOP · géométrie (plus bas = mieux)", C.RED, { "%.1f".format(it) }) { it.hdop }
         addSpark(content, "Satellites utilisés", C.BLUE, { "%.0f".format(it) }) { it.satsUsed.toFloat() }
         addSpark(content, "Signal moyen des satellites utilisés (dB-Hz)", C.constellation(GnssStore.GALILEO),
             { "%.0f".format(it) }, floorZero = false) { it.avgCn0Used }
@@ -241,6 +243,35 @@ class GnssActivity : Activity() {
         val ttff = GnssStore.ttffMs
         set("ttff", ttff?.let { "%.1f s".format(it / 1000f) } ?: "—",
             if (ttff != null) "depuis le démarrage" else "")
+
+        // DOP : multiplicateur d'erreur dû à la répartition des satellites dans le ciel
+        val hdop = GnssStore.freshHdop()
+        val pdop = GnssStore.freshPdop(); val vdop = GnssStore.freshVdop()
+        val dopQuality = when {
+            hdop == null -> ""
+            hdop < 1f -> "idéale"
+            hdop < 2f -> "excellente"
+            hdop < 5f -> "bonne"
+            hdop < 10f -> "moyenne"
+            else -> "faible"
+        }
+        val dopDetails = listOfNotNull(
+            dopQuality.takeIf { it.isNotEmpty() },
+            pdop?.let { "PDOP %.1f".format(it) },
+            vdop?.let { "VDOP %.1f".format(it) },
+        ).joinToString(" · ")
+        set("dop", hdop?.let { "%.1f".format(it) } ?: "—",
+            when {
+                hdop != null -> "$dopDetails\nPrécision ≈ erreur par satellite × HDOP"
+                running && sats.isNotEmpty() -> "non fourni par le téléphone"
+                else -> ""
+            },
+            when {
+                hdop == null -> C.TEXT
+                hdop < 2f -> C.GREEN
+                hdop < 5f -> C.AMBER
+                else -> C.RED
+            })
 
         // Graphes
         val history = GnssStore.history.toList()
