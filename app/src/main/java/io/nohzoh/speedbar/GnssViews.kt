@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import android.text.TextPaint
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.View
 import kotlin.math.cos
@@ -45,7 +47,7 @@ class SparkView(ctx: Context, private val pal: Palette) : View(ctx) {
     private val fillP = paint(pal.BLUE)
 
     override fun onMeasure(w: Int, h: Int) {
-        setMeasuredDimension(MeasureSpec.getSize(w), dp(130f).toInt())
+        setMeasuredDimension(MeasureSpec.getSize(w), dp(142f).toInt())
     }
 
     override fun onDraw(c: Canvas) {
@@ -55,7 +57,7 @@ class SparkView(ctx: Context, private val pal: Palette) : View(ctx) {
         val last = points.lastOrNull()?.second
         c.drawText(last?.let(format) ?: "—", w - pad, pad + valueP.textSize, valueP)
 
-        val top = pad + valueP.textSize + dp(10f)
+        val top = pad + valueP.textSize + dp(10f) + axisP.textSize
         val bottom = h - pad - axisP.textSize - dp(4f)
         val left = pad; val right = w - pad
         for (i in 0..2) {
@@ -78,8 +80,8 @@ class SparkView(ctx: Context, private val pal: Palette) : View(ctx) {
         if (hi - lo < 1f) hi = lo + 1f
         hi += (hi - lo) * 0.15f
 
-        axisP.textAlign = Paint.Align.RIGHT
-        c.drawText(format(hi), right, top - dp(2f), axisP)
+        axisP.textAlign = Paint.Align.LEFT
+        c.drawText("max " + format(hi), left, top - dp(4f), axisP)
 
         val window = GnssStore.WINDOW_MS.toFloat()
         fun x(t: Long) = left + (right - left) * (1f - (now - t) / window).coerceIn(0f, 1f)
@@ -209,7 +211,7 @@ class ConstellationView(ctx: Context, private val pal: Palette) : View(ctx) {
     private var rows: List<Row> = emptyList()
 
     private val nameP = paint(pal.TEXT, sp(14f), bold = true)
-    private val subP = paint(pal.MUTED, sp(11f))
+    private val subP = TextPaint(paint(pal.MUTED, sp(11f)))
     private val valueP = paint(pal.TEXT, sp(13f)).apply { textAlign = Paint.Align.RIGHT }
     private val trackP = paint(pal.BORDER)
     private val fillP = paint(pal.BLUE)
@@ -252,9 +254,15 @@ class ConstellationView(ctx: Context, private val pal: Palette) : View(ctx) {
             c.drawText(GnssStore.constellationName(r.c), dp(18f), y0 + dp(19f), nameP)
             val nameW = nameP.measureText(GnssStore.constellationName(r.c))
             val sub = listOf(GnssStore.constellationOrigin(r.c), r.bands).filter { it.isNotEmpty() }.joinToString(" · ")
-            c.drawText(sub, dp(24f) + nameW, y0 + dp(19f), subP)
             val avg = r.avg?.let { " · %.0f dB-Hz".format(it) } ?: ""
-            c.drawText("${r.used} / ${r.tracked}$avg", w, y0 + dp(19f), valueP)
+            val value = "${r.used} / ${r.tracked}$avg"
+            c.drawText(value, w, y0 + dp(19f), valueP)
+            val subX = dp(24f) + nameW
+            val avail = w - valueP.measureText(value) - dp(10f) - subX
+            if (avail > 0f) {
+                val fitted = TextUtils.ellipsize(sub, subP, avail, TextUtils.TruncateAt.END).toString()
+                c.drawText(fitted, subX, y0 + dp(19f), subP)
+            }
             val by = y0 + dp(29f)
             c.drawRoundRect(dp(18f), by, w, by + dp(6f), dp(3f), dp(3f), trackP)
             val ratio = if (r.tracked > 0) r.used.toFloat() / r.tracked else 0f

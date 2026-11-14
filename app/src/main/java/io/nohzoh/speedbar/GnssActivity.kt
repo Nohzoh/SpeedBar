@@ -46,9 +46,10 @@ class GnssActivity : Activity() {
         val scroll = ScrollView(this).apply {
             setBackgroundColor(C.BG)
             addView(content)
-            setOnApplyWindowInsetsListener { _, insets ->
+            setOnApplyWindowInsetsListener { v, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars())
-                content.setPadding(16.dp, bars.top + 12.dp, 16.dp, bars.bottom + 24.dp)
+                v.setPadding(0, bars.top, 0, 0) // zone de défilement sous la barre d'état
+                content.setPadding(16.dp, 12.dp, 16.dp, bars.bottom + 24.dp)
                 insets
             }
         }

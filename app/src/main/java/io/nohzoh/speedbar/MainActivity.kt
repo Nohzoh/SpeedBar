@@ -92,7 +92,8 @@ class MainActivity : Activity() {
             // Android 15 impose l'edge-to-edge : on décale le contenu sous les barres système.
             setOnApplyWindowInsetsListener { v, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars())
-                content.setPadding(20.dp, bars.top + 16.dp, 20.dp, bars.bottom + 24.dp)
+                v.setPadding(0, bars.top, 0, 0) // zone de défilement sous la barre d'état
+                content.setPadding(20.dp, 16.dp, 20.dp, bars.bottom + 24.dp)
                 insets
             }
         }
