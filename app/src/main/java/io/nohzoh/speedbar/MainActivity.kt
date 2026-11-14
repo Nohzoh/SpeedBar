@@ -30,22 +30,6 @@ import kotlin.math.roundToInt
 /** Écran principal : compteur en direct, démarrage, état, vitesses notées. */
 class MainActivity : Activity() {
 
-    /** Palette : suit le thème clair/sombre du système. */
-    private class Palette(dark: Boolean) {
-        private fun c(light: String, darkHex: String, d: Boolean) = Color.parseColor(if (d) darkHex else light)
-        val BG = c("#F4F6F9", "#0E1116", dark)
-        val SURFACE = c("#FFFFFF", "#181D25", dark)
-        val BORDER = c("#E2E6EC", "#262D38", dark)
-        val TEXT = c("#111827", "#E8EAED", dark)
-        val MUTED = c("#6B7280", "#8A93A0", dark)
-        val GREEN = c("#16A34A", "#4ADE80", dark)
-        val AMBER = c("#D97706", "#FBBF24", dark)
-        val RED = c("#DC2626", "#F87171", dark)
-        val BLUE = c("#2563EB", "#60A5FA", dark)
-        /** Texte posé sur un bouton plein (vert/orange). */
-        val ON_ACCENT = c("#FFFFFF", "#0E1116", dark)
-    }
-
     private val isDark by lazy {
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -63,6 +47,7 @@ class MainActivity : Activity() {
     private lateinit var stateView: TextView
     private lateinit var speedView: TextView
     private lateinit var unitView: TextView
+    private lateinit var gnssLine: TextView
     private lateinit var gaugeFill: View
     private lateinit var gaugeRest: View
     private lateinit var gaugeLabel: TextView
@@ -133,6 +118,8 @@ class MainActivity : Activity() {
         unitView = text("km/h", 18f, C.MUTED).apply { gravity = Gravity.CENTER }
         speedCard.addView(speedView, LinearLayout.LayoutParams(-1, -2))
         speedCard.addView(unitView, LinearLayout.LayoutParams(-1, -2))
+        gnssLine = text("", 13f, C.MUTED).apply { gravity = Gravity.CENTER }
+        speedCard.addView(gnssLine, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 6.dp })
 
         // Jauge vers le seuil
         gaugeRow = LinearLayout(this).apply {
@@ -169,6 +156,11 @@ class MainActivity : Activity() {
             }
         }
         content.addView(markButton, block(top = 10, height = 52))
+
+        val gnssButton = pill("Signal GPS  ›", C.SURFACE, C.TEXT, stroke = C.BORDER).apply {
+            setOnClickListener { startActivity(Intent(this@MainActivity, GnssActivity::class.java)) }
+        }
+        content.addView(gnssButton, block(top = 10, height = 52))
 
         // Problèmes éventuels
         problemsCard = card(stroke = C.AMBER)
@@ -248,6 +240,14 @@ class MainActivity : Activity() {
         val color = speedColor(speed, threshold)
         speedView.text = speed?.roundToInt()?.toString() ?: "--"
         speedView.setTextColor(if (speed == null) C.MUTED else color)
+
+        // Résumé GNSS
+        val sats = GnssStore.currentSats()
+        val acc = GnssStore.freshLocation()?.takeIf { it.hasAccuracy() }?.accuracy
+        gnssLine.text = if (!running || sats.isEmpty()) " " else buildString {
+            append("${GnssStore.usedCount(sats)} satellites")
+            if (acc != null) append("  ·  ± ${acc.roundToInt()} m")
+        }
 
         // Jauge
         if (threshold != null && threshold > 0f) {

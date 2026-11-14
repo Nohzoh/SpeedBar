@@ -14,10 +14,13 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
+import android.location.GnssStatus
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.SystemClock
 import kotlin.math.roundToInt
 
@@ -66,6 +69,15 @@ class SpeedService : Service(), LocationListener {
     private lateinit var lm: LocationManager
     private lateinit var nm: NotificationManager
 
+    private val gnssCallback = object : GnssStatus.Callback() {
+        override fun onSatelliteStatusChanged(status: GnssStatus) {
+            GnssStore.onStatus(status)
+        }
+        override fun onFirstFix(ttffMillis: Int) {
+            GnssStore.ttffMs = ttffMillis
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -82,6 +94,7 @@ class SpeedService : Service(), LocationListener {
         )
     }
 
+    @android.annotation.SuppressLint("MissingPermission") // vérifiée dans MainActivity, et SecurityException interceptée
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
@@ -101,8 +114,11 @@ class SpeedService : Service(), LocationListener {
                 buildNotification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             )
+            if (!running) GnssStore.reset()
             // Fix toutes les secondes, sans filtre de distance.
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this)
+            @Suppress("DEPRECATION")
+            lm.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
             running = true
         } catch (e: Exception) {
             lastError = "Démarrage impossible : ${e.javaClass.simpleName} ${e.message ?: ""}".trim()
@@ -118,11 +134,13 @@ class SpeedService : Service(), LocationListener {
         lastSpeedKmh = null
         onUpdate?.invoke()
         lm.removeUpdates(this)
+        lm.unregisterGnssStatusCallback(gnssCallback)
         super.onDestroy()
     }
 
     override fun onLocationChanged(location: Location) {
         lastFixAt = SystemClock.elapsedRealtime()
+        GnssStore.onLocation(location)
         lastSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else null
         nm.notify(NOTIF_ID, buildNotification())
         onUpdate?.invoke()

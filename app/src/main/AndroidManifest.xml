@@ -22,6 +22,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".GnssActivity"
+            android:exported="false" />
+
         <service
             android:name=".SpeedService"
             android:exported="false"
