@@ -4,6 +4,11 @@ import android.location.GnssStatus
 import android.location.Location
 import android.os.SystemClock
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.min
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /** Un signal reçu (un satellite peut émettre sur 2 fréquences → 2 signaux). */
 data class Sat(
@@ -29,6 +34,38 @@ data class Sample(
     val hdop: Float?,
 )
 
+/**
+ * Moyenne mobile exponentielle dans le temps (comme le load average Linux),
+ * corrigée du biais de démarrage : au début, c'est la moyenne des valeurs reçues.
+ */
+class Ema(private val tauMs: Float) {
+    private var raw = 0f
+    private var weight = 0f
+    private var lastT = 0L
+
+    fun add(x: Float, t: Long) {
+        val dt = if (lastT == 0L) 1000L else (t - lastT).coerceAtLeast(1L)
+        lastT = t
+        val a = exp(-dt / tauMs)
+        raw = raw * a + x * (1f - a)
+        weight = weight * a + (1f - a)
+    }
+
+    val value: Float? get() = if (weight > 1e-4f) raw / weight else null
+}
+
+/** Statistiques glissantes d'une constellation. */
+class ConstStats {
+    /** Score 0–100 en moyenne sur 1, 5 et 15 minutes. */
+    val score = listOf(Ema(60_000f), Ema(300_000f), Ema(900_000f))
+    // Détails sur 5 min, mis à jour seulement quand la constellation est captée.
+    val cn0 = Ema(300_000f)
+    val usage = Ema(300_000f)
+    val used = Ema(300_000f)
+    val hdop = Ema(300_000f)
+    val visible = Ema(300_000f)
+}
+
 /** Données GNSS partagées entre le service (écriture) et les écrans (lecture). Thread principal. */
 object GnssStore {
     const val WINDOW_MS = 5 * 60_000L
@@ -43,6 +80,9 @@ object GnssStore {
     private var location: Location? = null
     private var locationAt = 0L
     var ttffMs: Int? = null
+    var startedAt = 0L; private set
+    private val stats = mutableMapOf<Int, ConstStats>()
+    val constStats: Map<Int, ConstStats> get() = stats
 
     /** Dilution de précision lue dans les trames NMEA (null si la puce ne la fournit pas). */
     var pdop: Float? = null; private set
@@ -57,6 +97,7 @@ object GnssStore {
         location = null; locationAt = 0L
         ttffMs = null; history.clear(); lastSampleAt = 0L
         pdop = null; hdop = null; vdop = null; dopAt = 0L
+        stats.clear(); startedAt = SystemClock.elapsedRealtime()
     }
 
     fun onStatus(s: GnssStatus) {
@@ -143,6 +184,84 @@ object GnssStore {
             )
         )
         while (history.isNotEmpty() && now - history.first().t > WINDOW_MS) history.removeFirst()
+        if (list.isNotEmpty()) updateConstStats(list, now)
+    }
+
+    /**
+     * Score par constellation (0–100), heuristique :
+     *  35 % force du signal (15 dB-Hz → 0, 40 dB-Hz → max)
+     *  25 % part des satellites captés réellement utilisés par la puce
+     *  20 % nombre de satellites utilisés (8 et plus → max)
+     *  20 % géométrie propre à la constellation (HDOP calculé sur ses seuls satellites)
+     * Une constellation non captée compte 0 à cet instant.
+     */
+    private fun updateConstStats(list: List<Sat>, now: Long) {
+        val byConst = list.groupBy { it.constellation }
+        for (c in stats.keys + byConst.keys) {
+            val st = stats.getOrPut(c) { ConstStats() }
+            val sats = byConst[c].orEmpty()
+            val tracked = trackedCount(sats)
+            st.visible.add(if (tracked > 0) 1f else 0f, now)
+            if (tracked == 0) {
+                st.score.forEach { it.add(0f, now) }
+                continue
+            }
+            val used = usedCount(sats)
+            val cn0 = sats.filter { it.cn0 > 0f }.map { it.cn0 }.average().toFloat()
+            val usage = used.toFloat() / tracked
+            val h = constellationHdop(sats)
+            st.cn0.add(cn0, now)
+            st.usage.add(usage, now)
+            st.used.add(used.toFloat(), now)
+            if (h != null) st.hdop.add(h, now)
+            val score = 100f * (
+                0.35f * ((cn0 - 15f) / 25f).coerceIn(0f, 1f) +
+                0.25f * usage +
+                0.20f * (min(used, 8) / 8f) +
+                0.20f * (h?.let { ((10f - it) / 9f).coerceIn(0f, 1f) } ?: 0f)
+            )
+            st.score.forEach { it.add(score, now) }
+        }
+    }
+
+    /** HDOP qu'on obtiendrait avec les seuls satellites utilisés de cette liste (≥ 4 requis). */
+    fun constellationHdop(sats: List<Sat>): Float? {
+        val used = sats.filter { it.used && (it.elevation > 0f || it.azimuth > 0f) }.distinctBy { it.key }
+        if (used.size < 4) return null
+        val n = DoubleArray(16) // GᵀG, G = [est, nord, haut, horloge]
+        for (s in used) {
+            val el = Math.toRadians(s.elevation.toDouble())
+            val az = Math.toRadians(s.azimuth.toDouble())
+            val g = doubleArrayOf(cos(el) * sin(az), cos(el) * cos(az), sin(el), 1.0)
+            for (i in 0..3) for (j in 0..3) n[i * 4 + j] += g[i] * g[j]
+        }
+        val q = invert4(n) ?: return null
+        val h = sqrt(q[0] + q[5])
+        return h.toFloat().takeIf { it.isFinite() && it < 99f }
+    }
+
+    private fun invert4(src: DoubleArray): DoubleArray? {
+        val a = src.copyOf()
+        val inv = DoubleArray(16) { if (it % 5 == 0) 1.0 else 0.0 }
+        for (col in 0 until 4) {
+            var piv = col
+            for (r in col + 1 until 4) if (abs(a[r * 4 + col]) > abs(a[piv * 4 + col])) piv = r
+            if (abs(a[piv * 4 + col]) < 1e-9) return null
+            if (piv != col) for (k in 0 until 4) {
+                var t = a[col * 4 + k]; a[col * 4 + k] = a[piv * 4 + k]; a[piv * 4 + k] = t
+                t = inv[col * 4 + k]; inv[col * 4 + k] = inv[piv * 4 + k]; inv[piv * 4 + k] = t
+            }
+            val p = a[col * 4 + col]
+            for (k in 0 until 4) { a[col * 4 + k] /= p; inv[col * 4 + k] /= p }
+            for (r in 0 until 4) if (r != col) {
+                val f = a[r * 4 + col]
+                if (f != 0.0) for (k in 0 until 4) {
+                    a[r * 4 + k] -= f * a[col * 4 + k]
+                    inv[r * 4 + k] -= f * inv[col * 4 + k]
+                }
+            }
+        }
+        return inv
     }
 
     fun constellationName(c: Int) = when (c) {

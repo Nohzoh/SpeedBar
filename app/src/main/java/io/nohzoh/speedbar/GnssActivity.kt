@@ -36,6 +36,8 @@ class GnssActivity : Activity() {
     private lateinit var sky: SkyPlotView
     private lateinit var bars: SignalBarsView
     private lateinit var consts: ConstellationView
+    private lateinit var quality: QualityView
+    private lateinit var qualityNote: TextView
     private val sparks = mutableListOf<Pair<SparkView, (Sample) -> Float?>>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -116,6 +118,12 @@ class GnssActivity : Activity() {
         content.addView(section("Constellations · utilisés / captés"))
         consts = ConstellationView(this, C)
         content.addView(card().apply { addView(consts) }, block(8))
+
+        // Qualité dans le temps
+        content.addView(section("Qualité des constellations · score 0–100"))
+        quality = QualityView(this, C)
+        qualityNote = text("", 12f, C.MUTED).apply { setPadding(0, 10.dp, 0, 0) }
+        content.addView(card().apply { addView(quality); addView(qualityNote) }, block(8))
 
         // Ciel
         content.addView(section("Position des satellites dans le ciel"))
@@ -281,6 +289,30 @@ class GnssActivity : Activity() {
             view.invalidate()
         }
         consts.update(sats)
+        quality.update(GnssStore.constStats
+            .filterKeys { it != GnssStore.SBAS && it != 0 }
+            .map { (c, st) ->
+                val details = listOfNotNull(
+                    st.cn0.value?.let { "%.0f dB-Hz".format(it) },
+                    st.usage.value?.let { "${(it * 100).roundToInt()} % utilisés" },
+                    st.used.value?.let { "%.1f sat.".format(it) },
+                    st.hdop.value?.let { "HDOP %.1f".format(it) },
+                    st.visible.value?.let { "captée ${(it * 100).roundToInt()} % du temps" },
+                ).joinToString(" · ")
+                QualityView.Row(c, st.score.map { it.value }, details)
+            }
+            .sortedByDescending { it.scores[1] ?: 0f })
+        val minutes = if (running && GnssStore.startedAt > 0) (now - GnssStore.startedAt) / 60_000 else null
+        qualityNote.text = buildString {
+            append("Moyennes glissantes, comme le load average. Score = force du signal (35 %), " +
+                "part des satellites captés que la puce utilise (25 %), nombre utilisé (20 %), " +
+                "géométrie propre à la constellation (20 %). Détails : moyenne sur 5 min.")
+            if (minutes != null) {
+                append("\nSuivi depuis $minutes min")
+                if (minutes < 15) append(" : la colonne 15 min n'a pas encore tout son recul.")
+                else append(".")
+            }
+        }
         sky.sats = sats; sky.invalidate()
         bars.sats = sats; bars.invalidate()
     }

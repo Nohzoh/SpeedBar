@@ -270,3 +270,61 @@ class ConstellationView(ctx: Context, private val pal: Palette) : View(ctx) {
         }
     }
 }
+
+/** Score de chaque constellation sur 1 / 5 / 15 min, avec le détail sur 5 min. */
+class QualityView(ctx: Context, private val pal: Palette) : View(ctx) {
+    data class Row(val c: Int, val scores: List<Float?>, val details: String)
+    private var rows: List<Row> = emptyList()
+
+    private val headP = paint(pal.MUTED, sp(11f)).apply { textAlign = Paint.Align.CENTER }
+    private val nameP = paint(pal.TEXT, sp(14f), bold = true)
+    private val scoreP = paint(pal.TEXT, sp(16f), bold = true).apply { textAlign = Paint.Align.CENTER }
+    private val detailP = TextPaint(paint(pal.MUTED, sp(11f)))
+    private val dotP = paint(pal.BLUE)
+    private val headH get() = dp(22f)
+    private val rowH get() = dp(50f)
+    private val colW get() = dp(54f)
+
+    fun update(newRows: List<Row>) {
+        val relayout = newRows.size != rows.size
+        rows = newRows
+        if (relayout) requestLayout()
+        invalidate()
+    }
+
+    override fun onMeasure(w: Int, h: Int) {
+        setMeasuredDimension(MeasureSpec.getSize(w), (headH + rowH * max(rows.size, 1)).toInt())
+    }
+
+    private fun scoreColor(v: Float) = when {
+        v >= 70f -> pal.GREEN
+        v >= 40f -> pal.AMBER
+        else -> pal.RED
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val cols = listOf("1 min", "5 min", "15 min")
+        cols.forEachIndexed { i, label ->
+            c.drawText(label, w - colW * (2 - i) - colW / 2, dp(13f), headP)
+        }
+        if (rows.isEmpty()) {
+            detailP.textAlign = Paint.Align.CENTER
+            c.drawText("en attente de données", w / 2, headH + rowH / 2, detailP)
+            detailP.textAlign = Paint.Align.LEFT
+            return
+        }
+        rows.forEachIndexed { i, r ->
+            val y0 = headH + i * rowH
+            dotP.color = pal.constellation(r.c)
+            c.drawCircle(dp(6f), y0 + dp(15f), dp(5f), dotP)
+            c.drawText(GnssStore.constellationName(r.c), dp(18f), y0 + dp(20f), nameP)
+            r.scores.forEachIndexed { k, v ->
+                scoreP.color = v?.let { scoreColor(it) } ?: pal.MUTED
+                c.drawText(v?.let { "%.0f".format(it) } ?: "—", w - colW * (2 - k) - colW / 2, y0 + dp(21f), scoreP)
+            }
+            val fitted = TextUtils.ellipsize(r.details, detailP, w - dp(18f), TextUtils.TruncateAt.END).toString()
+            c.drawText(fitted, dp(18f), y0 + dp(39f), detailP)
+        }
+    }
+}
