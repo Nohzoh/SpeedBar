@@ -11,8 +11,8 @@ android {
         applicationId = "io.nohzoh.speedbar"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.8.0"
+        versionCode = 10
+        versionName = "0.8.1"
     }
 
     // Signature release : uniquement via variables d'env (secrets GitHub).
