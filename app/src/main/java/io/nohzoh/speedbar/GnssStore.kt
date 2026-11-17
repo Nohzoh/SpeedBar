@@ -1,8 +1,11 @@
 package io.nohzoh.speedbar
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.location.GnssStatus
 import android.location.Location
 import android.os.SystemClock
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
@@ -23,8 +26,8 @@ data class Sat(
     val key get() = constellation * 1000 + svid
 }
 
-/** Un point du trajet. */
-data class TrackPoint(val lat: Double, val lon: Double, val t: Long)
+/** Un point du trajet. [time] : heure UTC (ms), [ele] : altitude (m). */
+data class TrackPoint(val lat: Double, val lon: Double, val time: Long, val ele: Double?)
 
 /** Un point d'historique (≈ 1 par seconde). */
 data class Sample(
@@ -89,6 +92,44 @@ object GnssStore {
     val track = ArrayList<TrackPoint>()
     var distanceM = 0.0; private set
     var maxSpeedKmh = 0f; private set
+
+    // Le trajet est aussi écrit dans un fichier pour survivre à l'arrêt de l'app.
+    private var trackFile: File? = null
+    private var trackPrefs: SharedPreferences? = null
+
+    /** À appeler avant usage (service, écran carte) : recharge le trajet enregistré. */
+    fun init(ctx: Context) {
+        if (trackFile != null) return
+        val app = ctx.applicationContext
+        trackFile = File(app.filesDir, "track.csv")
+        trackPrefs = app.getSharedPreferences("track", Context.MODE_PRIVATE)
+        if (track.isEmpty()) loadTrack()
+    }
+
+    private fun loadTrack() {
+        val f = trackFile ?: return
+        if (!f.exists()) return
+        try {
+            f.forEachLine { line ->
+                val p = line.split(',')
+                val lat = p.getOrNull(0)?.toDoubleOrNull()
+                val lon = p.getOrNull(1)?.toDoubleOrNull()
+                val time = p.getOrNull(2)?.toLongOrNull()
+                if (lat != null && lon != null && time != null) {
+                    val prev = track.lastOrNull()
+                    if (prev != null) distanceM += dist(prev.lat, prev.lon, lat, lon)
+                    track.add(TrackPoint(lat, lon, time, p.getOrNull(3)?.toDoubleOrNull()))
+                }
+            }
+        } catch (_: Exception) { /* fichier abîmé : on garde ce qui a été lu */ }
+        maxSpeedKmh = trackPrefs?.getFloat("max", 0f) ?: 0f
+    }
+
+    private fun dist(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+        val d = FloatArray(1)
+        Location.distanceBetween(lat1, lon1, lat2, lon2, d)
+        return d[0]
+    }
     private val stats = mutableMapOf<Int, ConstStats>()
     val constStats: Map<Int, ConstStats> get() = stats
 
@@ -107,6 +148,8 @@ object GnssStore {
         pdop = null; hdop = null; vdop = null; dopAt = 0L
         stats.clear(); startedAt = SystemClock.elapsedRealtime()
         track.clear(); distanceM = 0.0; maxSpeedKmh = 0f
+        try { trackFile?.writeText("") } catch (_: Exception) {}
+        trackPrefs?.edit()?.putFloat("max", 0f)?.apply()
     }
 
     fun onStatus(s: GnssStatus) {
@@ -167,19 +210,19 @@ object GnssStore {
     /** Ajoute la position au trajet si elle est assez précise et qu'on a bougé d'au moins 3 m. */
     private fun addToTrack(loc: Location, t: Long) {
         if (loc.hasAccuracy() && loc.accuracy > 100f) return
-        if (loc.hasSpeed() && (!loc.hasAccuracy() || loc.accuracy < 50f)) {
-            maxSpeedKmh = maxOf(maxSpeedKmh, loc.speed * 3.6f)
+        if (loc.hasSpeed() && (!loc.hasAccuracy() || loc.accuracy < 50f) && loc.speed * 3.6f > maxSpeedKmh) {
+            maxSpeedKmh = loc.speed * 3.6f
+            trackPrefs?.edit()?.putFloat("max", maxSpeedKmh)?.apply()
         }
         val last = track.lastOrNull()
-        if (last == null) {
-            track.add(TrackPoint(loc.latitude, loc.longitude, t)); return
-        }
-        val d = FloatArray(1)
-        Location.distanceBetween(last.lat, last.lon, loc.latitude, loc.longitude, d)
-        if (d[0] >= 3f) {
-            distanceM += d[0]
-            track.add(TrackPoint(loc.latitude, loc.longitude, t))
-        }
+        val d = if (last == null) 0f else dist(last.lat, last.lon, loc.latitude, loc.longitude)
+        if (last != null && d < 3f) return
+        distanceM += d
+        val p = TrackPoint(loc.latitude, loc.longitude, loc.time, if (loc.hasAltitude()) loc.altitude else null)
+        track.add(p)
+        try {
+            trackFile?.appendText("${p.lat},${p.lon},${p.time},${p.ele ?: ""}\n")
+        } catch (_: Exception) {}
     }
 
     fun currentSats(): List<Sat> =

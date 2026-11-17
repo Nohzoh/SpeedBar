@@ -86,6 +86,7 @@ class SpeedService : Service(), LocationListener {
 
     override fun onCreate() {
         super.onCreate()
+        GnssStore.init(this)
         lm = getSystemService(LOCATION_SERVICE) as LocationManager
         nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.deleteNotificationChannel(OLD_CHANNEL_ID)
@@ -118,7 +119,7 @@ class SpeedService : Service(), LocationListener {
                 buildNotification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             )
-            if (!running) GnssStore.reset()
+            if (!running && intent != null) GnssStore.reset()
             // Fix toutes les secondes, sans filtre de distance.
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this)
             @Suppress("DEPRECATION")

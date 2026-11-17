@@ -30,6 +30,8 @@ import kotlin.math.roundToInt
 /** Carte du trajet depuis le démarrage du suivi (fond OpenStreetMap). */
 class MapActivity : Activity() {
 
+    companion object { private const val REQ_SAVE = 42 }
+
     private val C by lazy { Palette(isDarkTheme()) }
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
@@ -57,6 +59,7 @@ class MapActivity : Activity() {
             osmdroidBasePath = File(cacheDir, "osmdroid")
             osmdroidTileCache = File(cacheDir, "osmdroid/tiles")
         }
+        GnssStore.init(this)
         styleSystemBars(C)
 
         val root = FrameLayout(this).apply { setBackgroundColor(C.BG) }
@@ -121,6 +124,9 @@ class MapActivity : Activity() {
 
         // Boutons flottants : recentrer et voir tout le trajet
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val exportButton = roundButton("GPX") {}.apply { textSize = 13f }
+        exportButton.setOnClickListener { showExportMenu(exportButton) }
+        buttons.addView(exportButton, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = 10.dp })
         buttons.addView(roundButton("⤢") { follow = false; fitTrack(animated = true) })
         buttons.addView(roundButton("◎") {
             follow = true
@@ -212,7 +218,7 @@ class MapActivity : Activity() {
 
         val distKm = GnssStore.distanceM / 1000.0
         val durationMs = when {
-            track.size > 1 -> (if (running) SystemClock.elapsedRealtime() else track.last().t) - track.first().t
+            track.size > 1 -> (if (running) System.currentTimeMillis() else track.last().time) - track.first().time
             else -> 0L
         }
         stats["dist"]?.text = if (track.isEmpty()) "—"
@@ -224,6 +230,97 @@ class MapActivity : Activity() {
 
         map.invalidate()
     }
+
+    // ---- Export GPX ----
+
+    private fun showExportMenu(anchor: android.view.View) {
+        if (GnssStore.track.isEmpty()) {
+            toast("Aucun trajet à exporter pour l'instant")
+            return
+        }
+        android.widget.PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, "Partager…")
+            menu.add(0, 2, 1, "Enregistrer sur le téléphone…")
+            setOnMenuItemClickListener {
+                if (it.itemId == 1) shareGpx() else saveGpx()
+                true
+            }
+            show()
+        }
+    }
+
+    private fun gpxFileName(): String {
+        val first = GnssStore.track.firstOrNull()?.time ?: System.currentTimeMillis()
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd_HH'h'mm", java.util.Locale.FRANCE)
+        return "speedbar_${fmt.format(java.util.Date(first))}.gpx"
+    }
+
+    /** GPX 1.1 ; nouveau segment après une coupure de plus d'une minute (tunnel…). */
+    private fun buildGpx(): String {
+        val pts = GnssStore.track.toList()
+        val name = gpxFileName().removeSuffix(".gpx").replace('_', ' ')
+        val sb = StringBuilder()
+        sb.append("""<?xml version="1.0" encoding="UTF-8"?>""").append('\n')
+        sb.append("""<gpx version="1.1" creator="SpeedBar" xmlns="http://www.topografix.com/GPX/1/1">""").append('\n')
+        sb.append("  <metadata><name>$name</name>")
+        pts.firstOrNull()?.let { sb.append("<time>${iso(it.time)}</time>") }
+        sb.append("</metadata>\n")
+        sb.append("  <trk>\n    <name>$name</name>\n    <trkseg>\n")
+        var prev: TrackPoint? = null
+        for (p in pts) {
+            if (prev != null && p.time - prev.time > 60_000) sb.append("    </trkseg>\n    <trkseg>\n")
+            sb.append("      <trkpt lat=\"%.7f\" lon=\"%.7f\">".format(java.util.Locale.US, p.lat, p.lon))
+            p.ele?.let { sb.append("<ele>%.1f</ele>".format(java.util.Locale.US, it)) }
+            sb.append("<time>${iso(p.time)}</time></trkpt>\n")
+            prev = p
+        }
+        sb.append("    </trkseg>\n  </trk>\n</gpx>\n")
+        return sb.toString()
+    }
+
+    private fun iso(ms: Long) = java.time.Instant.ofEpochMilli(ms).toString()
+
+    private fun shareGpx() {
+        try {
+            val dir = File(cacheDir, "gpx").apply { mkdirs() }
+            val file = File(dir, gpxFileName())
+            file.writeText(buildGpx())
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("application/gpx+xml")
+                .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(android.content.Intent.createChooser(send, "Exporter le trajet"))
+        } catch (e: Exception) {
+            toast("Export impossible : ${e.message}")
+        }
+    }
+
+    private fun saveGpx() {
+        val create = android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            .setType("application/gpx+xml")
+            .putExtra(android.content.Intent.EXTRA_TITLE, gpxFileName())
+        @Suppress("DEPRECATION")
+        startActivityForResult(create, REQ_SAVE)
+    }
+
+    @Deprecated("API Activity classique")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (requestCode != REQ_SAVE || resultCode != RESULT_OK || uri == null) return
+        try {
+            contentResolver.openOutputStream(uri)?.use { it.write(buildGpx().toByteArray()) }
+            toast("Trajet enregistré (${GnssStore.track.size} points)")
+        } catch (e: Exception) {
+            toast("Enregistrement impossible : ${e.message}")
+        }
+    }
+
+    private fun toast(msg: String) =
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
 
     private fun formatDuration(ms: Long): String {
         val s = ms / 1000
