@@ -163,6 +163,11 @@ class MainActivity : Activity() {
         }
         content.addView(gnssButton, block(top = 10, height = 52))
 
+        val mapButton = pill("Carte du trajet  ›", C.SURFACE, C.TEXT, stroke = C.BORDER).apply {
+            setOnClickListener { startActivity(Intent(this@MainActivity, MapActivity::class.java)) }
+        }
+        content.addView(mapButton, block(top = 10, height = 52))
+
         // Problèmes éventuels
         problemsCard = card(stroke = C.AMBER)
         problemsView = text("", 14f, C.TEXT).apply { setLineSpacing(4.dp.toFloat(), 1f) }

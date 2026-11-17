@@ -11,8 +11,8 @@ android {
         applicationId = "io.nohzoh.speedbar"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.8.1"
+        versionCode = 11
+        versionName = "0.9.0"
     }
 
     // Signature release : uniquement via variables d'env (secrets GitHub).
@@ -45,4 +45,7 @@ android {
     }
 }
 
-// Aucune dépendance : uniquement le SDK Android (LocationManager, Notification).
+dependencies {
+    // Carte OpenStreetMap, sans clé d'API.
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
+}

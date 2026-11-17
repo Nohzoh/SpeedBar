@@ -23,6 +23,9 @@ data class Sat(
     val key get() = constellation * 1000 + svid
 }
 
+/** Un point du trajet. */
+data class TrackPoint(val lat: Double, val lon: Double, val t: Long)
+
 /** Un point d'historique (≈ 1 par seconde). */
 data class Sample(
     val t: Long,
@@ -81,6 +84,11 @@ object GnssStore {
     private var locationAt = 0L
     var ttffMs: Int? = null
     var startedAt = 0L; private set
+
+    /** Trajet depuis le démarrage du suivi (gardé après l'arrêt, effacé au prochain démarrage). */
+    val track = ArrayList<TrackPoint>()
+    var distanceM = 0.0; private set
+    var maxSpeedKmh = 0f; private set
     private val stats = mutableMapOf<Int, ConstStats>()
     val constStats: Map<Int, ConstStats> get() = stats
 
@@ -98,6 +106,7 @@ object GnssStore {
         ttffMs = null; history.clear(); lastSampleAt = 0L
         pdop = null; hdop = null; vdop = null; dopAt = 0L
         stats.clear(); startedAt = SystemClock.elapsedRealtime()
+        track.clear(); distanceM = 0.0; maxSpeedKmh = 0f
     }
 
     fun onStatus(s: GnssStatus) {
@@ -119,6 +128,7 @@ object GnssStore {
     fun onLocation(loc: Location) {
         location = loc
         locationAt = SystemClock.elapsedRealtime()
+        addToTrack(loc, locationAt)
         sample()
     }
 
@@ -153,6 +163,24 @@ object GnssStore {
     fun freshHdop(): Float? = hdop?.takeIf { SystemClock.elapsedRealtime() - dopAt < STALE_MS }
     fun freshPdop(): Float? = pdop?.takeIf { SystemClock.elapsedRealtime() - dopAt < STALE_MS }
     fun freshVdop(): Float? = vdop?.takeIf { SystemClock.elapsedRealtime() - dopAt < STALE_MS }
+
+    /** Ajoute la position au trajet si elle est assez précise et qu'on a bougé d'au moins 3 m. */
+    private fun addToTrack(loc: Location, t: Long) {
+        if (loc.hasAccuracy() && loc.accuracy > 100f) return
+        if (loc.hasSpeed() && (!loc.hasAccuracy() || loc.accuracy < 50f)) {
+            maxSpeedKmh = maxOf(maxSpeedKmh, loc.speed * 3.6f)
+        }
+        val last = track.lastOrNull()
+        if (last == null) {
+            track.add(TrackPoint(loc.latitude, loc.longitude, t)); return
+        }
+        val d = FloatArray(1)
+        Location.distanceBetween(last.lat, last.lon, loc.latitude, loc.longitude, d)
+        if (d[0] >= 3f) {
+            distanceM += d[0]
+            track.add(TrackPoint(loc.latitude, loc.longitude, t))
+        }
+    }
 
     fun currentSats(): List<Sat> =
         if (SystemClock.elapsedRealtime() - statusAt < STALE_MS) sats else emptyList()

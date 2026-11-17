@@ -84,6 +84,7 @@ class GnssActivity : Activity() {
 
         // Tuiles
         val tileDefs = listOf(
+            "pos" to "Position",
             "sats" to "Satellites utilisés",
             "acc" to "Précision horizontale",
             "cn0" to "Signal moyen",
@@ -102,6 +103,7 @@ class GnssActivity : Activity() {
                 val sub = text(" ", 12f, C.MUTED)
                 addView(value); addView(sub)
                 tiles[key] = Tile(value, sub)
+                if (key == "pos") setOnClickListener { copyPosition() }
             }
         }
         addGrid(content, tileViews, tileCols, top = 10)
@@ -178,6 +180,13 @@ class GnssActivity : Activity() {
             else -> C.GREEN
         })
         hintCard.visibility = if (running) View.GONE else View.VISIBLE
+
+        // Position
+        set("pos",
+            loc?.let { "%.5f° %s\n%.5f° %s".format(java.util.Locale.US,
+                kotlin.math.abs(it.latitude), if (it.latitude >= 0) "N" else "S",
+                kotlin.math.abs(it.longitude), if (it.longitude >= 0) "E" else "O") } ?: "—",
+            if (loc != null) "touche pour copier" else "")
 
         // Satellites
         val used = GnssStore.usedCount(sats)
@@ -319,6 +328,14 @@ class GnssActivity : Activity() {
         }
         sky.sats = sats; sky.invalidate()
         bars.sats = sats; bars.invalidate()
+    }
+
+    private fun copyPosition() {
+        val loc = GnssStore.freshLocation() ?: return
+        val txt = "%.6f, %.6f".format(java.util.Locale.US, loc.latitude, loc.longitude)
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Position", txt))
+        android.widget.Toast.makeText(this, "Copié : $txt", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun cardinal(deg: Float): String {
